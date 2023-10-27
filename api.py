@@ -1,50 +1,36 @@
 from flask import Flask, request, jsonify
-from spacy.lang.en.stop_words import STOP_WORDS
-from string import punctuation
-from heapq import nlargest
-import spacy
+from transformers import AutoModelForCausalLM,AutoTokenizer , AutoModelForSeq2SeqLM
+import torch
+import tokenizer
+from flask_cors import CORS
 
 app = Flask(__name__)
-
+CORS(app)
+cors = CORS(app, resources={r"/summarize": {"origins": "http://localhost:3000"}})
 @app.route('/summarize', methods=['POST'])
 def summarize_text():
     try:
         data = request.get_json()
         text = data['text']
         
-        stopwords = list(STOP_WORDS)
-        nlp = spacy.load('en_core_web_sm')
-        doc = nlp(text)
+        text1 = text[0:int(len(text)/2)]
+        text2 = text[int(len(text)/2):]
+        # Load the pre-trained GPT-2 model and tokenizer
+        model_name = "t5-small"
+        tokenizer = AutoTokenizer.from_pretrained(model_name)
+        model_path = "C:\codes\Speech recognition\sum"
+        model = AutoModelForSeq2SeqLM.from_pretrained(model_path)
+        # Tokenize the input text
+        inputs1 = tokenizer.encode("summarize: " + text1, return_tensors="pt", max_length=1024, truncation=True)
+        inputs2 = tokenizer.encode("summarize: " + text2, return_tensors="pt", max_length=1024, truncation=True)
+        # Generate a summary
+        summary_ids1 = model.generate(inputs1, max_length=200, num_beams=4, early_stopping=True)
+        summary_ids2 = model.generate(inputs2, max_length=200, num_beams=4, early_stopping=True)
+        # Decode the summary
+        summary1 = tokenizer.decode(summary_ids1[0], skip_special_tokens=True)
+        summary2 = tokenizer.decode(summary_ids2[0], skip_special_tokens=True)
         
-        word_frequencies = {}
-        for word in doc:
-            if word.text.lower() not in stopwords and word.text.lower() not in punctuation:
-                if word.text not in word_frequencies.keys():
-                    word_frequencies[word.text] = 1
-                else:
-                    word_frequencies[word.text] += 1
-        
-        max_frequency = max(word_frequencies.values())
-        for word in word_frequencies.keys():
-            word_frequencies[word] = word_frequencies[word] / max_frequency
-        
-        sentence_tokens = [sent for sent in doc.sents]
-        
-        sentence_scores = {}
-        for sent in sentence_tokens:
-            for word in sent:
-                if word.text.lower() in word_frequencies.keys():
-                    if sent not in sentence_scores.keys():
-                        sentence_scores[sent] = word_frequencies[word.text.lower()]
-                    else:
-                        sentence_scores[sent] += word_frequencies[word.text.lower()]
-        
-        select_length = int(len(sentence_tokens) * 0.3)
-        summary = nlargest(select_length, sentence_scores, key=sentence_scores.get)
-        
-        summarized_text = ' '.join([str(s) for s in summary])
-        
-        return jsonify({"summary": summarized_text})
+        return jsonify({"summary": summary1+summary2})
     
     except Exception as e:
         return jsonify({"error": str(e)})
